@@ -13,8 +13,8 @@ import { AnnouncementBar } from "./components/AnnouncementBar";
 import { HUDTop }          from "./components/HUDTop";
 import { HUDBottom }       from "./components/HUDBottom";
 import { StatusPanel }     from "./components/StatusPanel";
-import { CameraPresets }   from "./components/CameraPresets";
 import { ControlPanel }    from "./components/ControlPanel";
+import { TrainControl }    from "./components/TrainControl";
 import { DepartureBoard }  from "./components/DepartureBoard";
 import { AIAssistant }     from "./components/AIAssistant";
 
@@ -139,13 +139,21 @@ export default function LastTrainOut() {
       const alighting = s.alighters?.some((a) => ["waiting", "exiting"].includes(a.userData.state));
       if (boarding || alighting) { showToast("⏳ Awaiting passengers…"); return; }
 
-      s.tState = "departing"; s.tTargX = -90; s.tVel = 0;
-      setBtnTrainText("🚂 Arrive"); setTrainStatusText("● Departing"); setTrainStatusColor("rgba(255,160,80,.8)");
+      // Close doors first, then depart once the slide animation has finished.
+      s.doorMeshes?.forEach((dm) => (dm.userData.open = false));
+      setDoorStatus("Doors — Closed");
       s.playDoorChime();
-      setTimeout(() => s.horn(), 600);
-      setTimeout(() => s.setEngVol(0.16, 1.5), 1000);
-      s.triggerAnn(ANNOUNCEMENTS[5]);
-      showToast("Train departing…");
+      showToast("🚪 Doors closing…");
+      clearTimeout(s.doorCloseTimer);
+      s.doorCloseTimer = setTimeout(() => {
+        if (s.tState !== "stopped") return;
+        s.tState = "departing"; s.tTargX = -90; s.tVel = 0;
+        setBtnTrainText("🚂 Arrive"); setTrainStatusText("● Departing"); setTrainStatusColor("rgba(255,160,80,.8)");
+        s.horn?.();
+        setTimeout(() => s.setEngVol(0.16, 1.5), 400);
+        s.triggerAnn(ANNOUNCEMENTS[5]);
+        showToast("Train departing…");
+      }, 1500);
     } else {
       s.tState = "arriving"; s.tTargX = 0; s.tVel = 0;
       s.trainG.position.set(90, 0, -4);
@@ -200,7 +208,7 @@ export default function LastTrainOut() {
     slide(handleFog,  55, 38, 500,  10000);
 
     // ── Act 2: Golden hour (14–26 s) ────────────────────────────────────────
-    after(14000, () => { handleCam(1); showToast("🌅 Golden hour…"); });
+    after(14000, () => { handleCam(1); showToast("🌅 Golden hour — aerial view"); });
     slide(handleTime, 30, 65, 14000, 11000);
     slide(handleFog,  38,  8, 14000,  9000);
     slide(handleRain, 12,  0, 14000,  7000);
@@ -224,7 +232,7 @@ export default function LastTrainOut() {
     });
 
     // ── Act 4: Storm builds (36–52 s) ────────────────────────────────────────
-    after(36000, () => { handleCam(3); showToast("⛈ Storm approaching…"); });
+    after(36000, () => { handleCam(1); showToast("⛈ Storm approaching…"); });
     setLt(true, 36000);
     slide(handleTime, 65, 18, 36000, 13000);
     slide(handleRain,  0, 83, 36000, 12000);
@@ -239,18 +247,24 @@ export default function LastTrainOut() {
     after(62000, () => {
       const s = S.current;
       if (s.tState === "stopped") {
-        s.tState = "departing"; s.tTargX = -90; s.tVel = 0;
-        setBtnTrainText("🚂 Arrive");
-        setTrainStatusText("● Departing"); setTrainStatusColor("rgba(255,160,80,.8)");
+        // Close doors first, then accelerate out of the platform.
+        s.doorMeshes?.forEach((dm) => (dm.userData.open = false));
+        setDoorStatus("Doors — Closed");
         s.playDoorChime?.();
-        setTimeout(() => s.horn?.(), 600);
-        setTimeout(() => s.setEngVol?.(0.16, 1.5), 1000);
+        after(1500, () => {
+          if (s.tState !== "stopped") return;
+          s.tState = "departing"; s.tTargX = -90; s.tVel = 0;
+          setBtnTrainText("🚂 Arrive");
+          setTrainStatusText("● Departing"); setTrainStatusColor("rgba(255,160,80,.8)");
+          s.horn?.();
+          setTimeout(() => s.setEngVol?.(0.16, 1.5), 400);
+        });
       }
       showToast("🚂 Last train departing into the storm…");
     });
 
     // ── Act 7: Storm clears, quiet night (72–86 s) ───────────────────────────
-    after(72000, () => { handleCam(3); showToast("🌙 Storm passing…"); });
+    after(72000, () => { handleCam(1); showToast("🌙 Storm passing…"); });
     setLt(false, 74000);
     slide(handleRain, 83, 8,  72000, 12000);
     slide(handleFog,  65, 18, 74000, 10000);
@@ -361,16 +375,16 @@ export default function LastTrainOut() {
         lamp1Status={lamp1Status}
         lamp2Status={lamp2Status}
       />
-      <CameraPresets activeCam={activeCam} onCamChange={handleCam} />
+      <TrainControl btnTrainText={btnTrainText} handleTrain={handleTrain} />
       <ControlPanel
         timeVal={timeVal}       rainVal={rainVal}     fogVal={fogVal}       windVal={windVal}
         handleTime={handleTime} handleRain={handleRain} handleFog={handleFog} handleWind={handleWind}
         lightningOn={lightningOn} handleLightning={handleLightning}
-        btnTrainText={btnTrainText} handleTrain={handleTrain}
         handleHorn={handleHorn}
         playCinematic={playCinematic} cinematicMode={cinematicMode}
         autoCycle={autoCycle} handleAutoCycle={handleAutoCycle}
         snowOn={snowOn} handleSnow={handleSnow}
+        activeCam={activeCam} handleCam={handleCam}
       />
       <HUDBottom fps={fps} />
 

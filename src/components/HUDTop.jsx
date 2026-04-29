@@ -9,20 +9,27 @@ export function HUDTop({ clock, rainLabel }) {
       padding: "1.8rem 2.2rem",
     }}>
       {/* Title block */}
-      <div>
-        <div style={{
-          fontFamily: mono, fontSize: "0.5rem", letterSpacing: "0.3em",
-          color: "rgba(180,205,230,.4)", textTransform: "uppercase", marginBottom: "0.4rem",
-        }}>
-          React Port · Challenge #023 · Train
+      <div style={{ display: "flex", alignItems: "center", gap: "0.9rem" }}>
+        <div>
+          <h1 style={{
+            fontFamily: serif, fontSize: "clamp(1.4rem,3vw,2.4rem)",
+            fontWeight: 400, fontStyle: "italic",
+            color: "rgba(200,220,245,.9)", letterSpacing: "0.05em",
+          }}>
+            Last Train Out
+          </h1>
         </div>
-        <h1 style={{
-          fontFamily: serif, fontSize: "clamp(1.4rem,3vw,2.4rem)",
-          fontWeight: 400, fontStyle: "italic",
-          color: "rgba(200,220,245,.9)", letterSpacing: "0.05em",
-        }}>
-          Last Train Out
-        </h1>
+        <img
+          src="/train.svg"
+          alt=""
+          aria-hidden="true"
+          style={{
+            width: "clamp(2.2rem, 4vw, 3rem)",
+            height: "clamp(2.2rem, 4vw, 3rem)",
+            opacity: 0.85,
+            filter: "drop-shadow(0 0 12px rgba(120,170,230,.25))",
+          }}
+        />
       </div>
 
       {/* Clock / platform block */}

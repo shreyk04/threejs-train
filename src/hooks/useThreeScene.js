@@ -98,7 +98,7 @@ export function useThreeScene(mountRef, rainCanvasRef, callbacks) {
       };
 
       // ── Materials ────────────────────────────────────────────────────────────
-      const wetMat      = mkMat({ color: 0x0a1018, roughness: 0.28, metalness: 0.55 });
+      const wetMat      = mkMat({ color: 0x4a5260, roughness: 0.78, metalness: 0.08 });
       const concMat     = mkMat({ color: 0x18202e, roughness: 0.85, metalness: 0.05 });
       const bodyMat     = mkMat({ color: 0x1e4a8a, roughness: 0.35, metalness: 0.65 });
       const bodyMatAcc  = mkMat({ color: 0xd42b2b, roughness: 0.3,  metalness: 0.6  });
@@ -110,6 +110,7 @@ export function useThreeScene(mountRef, rainCanvasRef, callbacks) {
       const lglowMat    = mkMat({ color: 0xffc055, emissive: 0xffa018, emissiveIntensity: 1.6, roughness: 0.3 });
       const loffMat     = mkMat({ color: 0x282828, roughness: 0.6 });
       const roofMat     = mkMat({ color: 0x0c1218, roughness: 0.8, metalness: 0.2  });
+      const platformRoofMat = mkMat({ color: 0x121822, roughness: 0.72, metalness: 0.45 });
       const doorMatBase = mkMat({ color: 0x101820, roughness: 0.4, metalness: 0.6  });
       const yelMat      = mkMat({ color: 0xf0c020, emissive: 0xb09000, emissiveIntensity: 0.3 });
       const lensGlowMat = mkMat({ color: 0xd0e8ff, emissive: 0xb0d8ff, emissiveIntensity: 3   });
@@ -178,6 +179,73 @@ export function useThreeScene(mountRef, rainCanvasRef, callbacks) {
         concMat.map = tex; concMat.needsUpdate = true;
       })();
 
+      // ── Platform roof texture ────────────────────────────────────────────────
+      // Corrugated steel sheets with panel seams, rivets, weathering streaks and
+      // grime. The U axis maps to roof length (22m) so panel seams run across the
+      // platform; the V axis maps to depth (4.5m), and corrugation ribs run
+      // parallel to the length, like real station canopies.
+      (function buildRoofTex() {
+        const cv = document.createElement("canvas"); cv.width = 256; cv.height = 256;
+        const ctx = cv.getContext("2d");
+        // Base dark steel
+        ctx.fillStyle = "#141a22"; ctx.fillRect(0, 0, 256, 256);
+        // Corrugation ribs — horizontal bands varying across V
+        const ribPx = 18;
+        for (let y = 0; y < 256; y += ribPx) {
+          const gr = ctx.createLinearGradient(0, y, 0, y + ribPx);
+          gr.addColorStop(0,    "rgba(255,255,255,0.08)");
+          gr.addColorStop(0.35, "rgba(255,255,255,0.02)");
+          gr.addColorStop(0.55, "rgba(0,0,0,0.18)");
+          gr.addColorStop(1,    "rgba(0,0,0,0.32)");
+          ctx.fillStyle = gr; ctx.fillRect(0, y, 256, ribPx);
+          ctx.strokeStyle = "rgba(0,0,0,0.45)"; ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(256, y); ctx.stroke();
+        }
+        // Panel seams — vertical, every 64 px (U axis = length)
+        ctx.strokeStyle = "rgba(0,0,0,0.55)"; ctx.lineWidth = 1.4;
+        for (let x = 0; x <= 256; x += 64) {
+          ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, 256); ctx.stroke();
+          // Subtle highlight on the right side of each seam
+          ctx.strokeStyle = "rgba(255,255,255,0.05)"; ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.moveTo(x + 1, 0); ctx.lineTo(x + 1, 256); ctx.stroke();
+          ctx.strokeStyle = "rgba(0,0,0,0.55)"; ctx.lineWidth = 1.4;
+        }
+        // Rivets along seams
+        ctx.fillStyle = "rgba(0,0,0,0.7)";
+        for (let x = 0; x <= 256; x += 64) {
+          for (let y = 10; y < 256; y += 22) {
+            ctx.beginPath(); ctx.arc(x, y, 1.3, 0, Math.PI * 2); ctx.fill();
+          }
+        }
+        // Weathering — vertical streaks (rust runoff)
+        for (let i = 0; i < 14; i++) {
+          const sx = Math.random() * 256;
+          const sy = Math.random() * 60;
+          const sh = 80 + Math.random() * 140;
+          const gr = ctx.createLinearGradient(sx, sy, sx, sy + sh);
+          gr.addColorStop(0,   "rgba(80,40,20,0)");
+          gr.addColorStop(0.4, "rgba(80,40,20,0.18)");
+          gr.addColorStop(1,   "rgba(60,30,15,0)");
+          ctx.fillStyle = gr;
+          ctx.fillRect(sx, sy, 1.5 + Math.random() * 1.5, sh);
+        }
+        // Random grime patches
+        for (let i = 0; i < 60; i++) {
+          const gx = Math.random() * 256, gy = Math.random() * 256;
+          const gr = ctx.createRadialGradient(gx, gy, 0, gx, gy, 4 + Math.random() * 8);
+          gr.addColorStop(0, `rgba(0,0,0,${0.12 + Math.random() * 0.18})`);
+          gr.addColorStop(1, "rgba(0,0,0,0)");
+          ctx.fillStyle = gr; ctx.fillRect(gx - 12, gy - 12, 24, 24);
+        }
+        const tex = new THREE.CanvasTexture(cv);
+        tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+        tex.anisotropy = 4;
+        tex.repeat.set(5, 1);
+        platformRoofMat.map = tex;
+        platformRoofMat.color.setHex(0xffffff); // let the texture supply tone
+        platformRoofMat.needsUpdate = true;
+      })();
+
       // ── Lights ───────────────────────────────────────────────────────────────
       // Low ambient — this is the #1 thing that kills realism if too high
       const ambient = new THREE.AmbientLight(0x060c18, 0.35); scene.add(ambient);
@@ -196,8 +264,11 @@ export function useThreeScene(mountRef, rainCanvasRef, callbacks) {
       sun.shadow.bias = -0.001;
       Object.assign(sun.shadow.camera, { left: -40, right: 40, top: 30, bottom: -20, far: 100 });
       scene.add(sun);
-      const lp1 = new THREE.PointLight(0xffa035, 4, 18, 2); lp1.position.set(-6, 7, 2); lp1.castShadow = true; scene.add(lp1);
-      const lp2 = new THREE.PointLight(0xffa035, 4, 18, 2); lp2.position.set(6, 7, 2);  lp2.castShadow = true; scene.add(lp2);
+      // lp1/lp2 retained as objects (their .intensity is referenced in the TOD/click
+      // code) but not added to the scene — the platform lamp posts they drove were
+      // positioned under the roof and clipped through it.
+      const lp1 = new THREE.PointLight(0xffa035, 0, 18, 2); lp1.position.set(-6, 7, 2);
+      const lp2 = new THREE.PointLight(0xffa035, 0, 18, 2); lp2.position.set(6, 7, 2);
       const tg1 = new THREE.PointLight(0xffe080, 2.5, 10, 2); tg1.position.set(-4, 3, -3); scene.add(tg1);
       const tg2 = new THREE.PointLight(0xffe080, 2.5, 10, 2); tg2.position.set(3, 3, -3);  scene.add(tg2);
       const hLight = new THREE.SpotLight(0xc8e0ff, 8, 50, Math.PI * 0.11, 0.3, 1.5);
@@ -262,28 +333,58 @@ export function useThreeScene(mountRef, rainCanvasRef, callbacks) {
       s.moonObj = moonObj;
 
       // ── Ground & platform ────────────────────────────────────────────────────
-      // Canvas texture: wet asphalt with puddles
+      // Canvas texture: clean concrete paving with a subtle slab grid and aggregate grain
       (function buildGroundTexture() {
         const c = document.createElement("canvas"); c.width = 512; c.height = 512;
         const ctx = c.getContext("2d");
-        ctx.fillStyle = "#07101a"; ctx.fillRect(0, 0, 512, 512);
-        for (let i = 0; i < 9000; i++) {
-          const x = Math.random() * 512, y = Math.random() * 512;
-          const v = Math.floor(Math.random() * 24);
-          ctx.fillStyle = `rgba(${v},${v + 3},${v + 7},0.55)`;
-          ctx.fillRect(x, y, 1 + Math.random(), 1 + Math.random());
-        }
-        for (let i = 0; i < 12; i++) {
+        // Base: medium concrete grey, slightly cool
+        ctx.fillStyle = "#525a68"; ctx.fillRect(0, 0, 512, 512);
+        // Soft tonal patches — subtle weathering, not stains
+        for (let i = 0; i < 14; i++) {
           const px = Math.random() * 512, py = Math.random() * 512;
-          const rx = 18 + Math.random() * 55, ry = 7 + Math.random() * 22;
+          const rx = 40 + Math.random() * 110, ry = 30 + Math.random() * 80;
           const gr = ctx.createRadialGradient(px, py, 0, px, py, rx);
-          gr.addColorStop(0, "rgba(45,75,110,0.42)"); gr.addColorStop(1, "rgba(0,0,0,0)");
-          ctx.beginPath(); ctx.ellipse(px, py, rx, ry, Math.random() * Math.PI, 0, Math.PI * 2);
+          const tint = Math.random() < 0.5 ? "rgba(95,105,118,0.28)" : "rgba(64,70,80,0.22)";
+          gr.addColorStop(0, tint); gr.addColorStop(1, "rgba(0,0,0,0)");
+          ctx.beginPath();
+          ctx.ellipse(px, py, rx, ry, Math.random() * Math.PI, 0, Math.PI * 2);
           ctx.fillStyle = gr; ctx.fill();
+        }
+        // Aggregate grain — fine specks of varying greys
+        for (let i = 0; i < 14000; i++) {
+          const x = Math.random() * 512, y = Math.random() * 512;
+          const v = 70 + Math.floor(Math.random() * 70);
+          ctx.fillStyle = `rgba(${v},${v + 2},${v + 6},${0.18 + Math.random() * 0.25})`;
+          ctx.fillRect(x, y, 1 + Math.random() * 1.2, 1 + Math.random() * 1.2);
+        }
+        // A few darker pits — keep things from looking uniform
+        for (let i = 0; i < 90; i++) {
+          ctx.fillStyle = `rgba(34,38,46,${0.35 + Math.random() * 0.3})`;
+          ctx.beginPath();
+          ctx.arc(Math.random() * 512, Math.random() * 512, 0.6 + Math.random() * 1.4, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        // Slab grid — 4x4 paving blocks per texture tile, with soft inset highlight
+        const N = 4, step = 512 / N;
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = "rgba(28,32,40,0.55)";
+        for (let i = 1; i < N; i++) {
+          const k = Math.round(i * step) + 0.5;
+          ctx.beginPath(); ctx.moveTo(k, 0); ctx.lineTo(k, 512); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(0, k); ctx.lineTo(512, k); ctx.stroke();
+        }
+        // Soft 1px highlight just inside each grout line — gives slabs a chiseled feel
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = "rgba(140,150,162,0.18)";
+        for (let i = 1; i < N; i++) {
+          const k = Math.round(i * step);
+          ctx.beginPath(); ctx.moveTo(k - 1.5, 0); ctx.lineTo(k - 1.5, 512); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(0, k - 1.5); ctx.lineTo(512, k - 1.5); ctx.stroke();
         }
         const tex = new THREE.CanvasTexture(c);
         tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-        tex.repeat.set(5, 2);
+        tex.repeat.set(8, 4);
+        tex.anisotropy = 8;
         wetMat.map = tex; wetMat.needsUpdate = true;
       })();
 
@@ -318,9 +419,27 @@ export function useThreeScene(mountRef, rainCanvasRef, callbacks) {
           g.add(mkBox(2,   1.5, 0.05, winMat, wx, 3.3, 1.85));
           g.add(mkBox(2.2, 1.7, 0.04, dkMat,  wx, 3.3, 1.84));
         });
-        const dm = mkBox(1.4, 3.5, 0.06, doorMatBase.clone(), 0, 2.55, 1.83);
-        dm.userData = { type: "door", open: false };
-        g.add(dm); clickables.push(dm); doorMeshes.push(dm);
+        // Two-panel sliding door: left + right panels meet in the middle when
+        // closed and slide outward to expose the doorway when open. A shared
+        // userData object lets the click/raycast logic toggle both panels in
+        // sync, and lets `doorMeshes[i].userData.open` keep working as before.
+        const panelW = 0.78, panelHalf = panelW / 2, slideDist = 0.78;
+        const doorL = mkBox(panelW, 3.5, 0.06, doorMatBase.clone(), -panelHalf, 2.55, 1.835);
+        const doorR = mkBox(panelW, 3.5, 0.06, doorMatBase.clone(),  panelHalf, 2.55, 1.835);
+        // Dark frame inset behind the panels so the open doorway looks like a real opening.
+        g.add(mkBox(panelW * 2 + 0.02, 3.5, 0.04, dkMat, 0, 2.55, 1.79));
+        const sharedUd = {
+          type: "door", open: false,
+          left: doorL, right: doorR,
+          baseLX: -panelHalf, baseRX: panelHalf, slide: slideDist,
+        };
+        doorL.userData = sharedUd;
+        doorR.userData = sharedUd;
+        g.add(doorL); g.add(doorR);
+        clickables.push(doorL); clickables.push(doorR);
+        // Push a single "pair" handle so the rest of the codebase iterates
+        // once per door, not once per panel.
+        doorMeshes.push({ userData: sharedUd });
         [-4, -3, 3, 4].forEach((wx) => {
           g.add(mkBox(0.2, 0.2, 4.2, dkMat, wx, 0.6, 0));
           [-1.8, 1.8].forEach((wz) => {
@@ -386,6 +505,9 @@ export function useThreeScene(mountRef, rainCanvasRef, callbacks) {
       s.trainG = trainG;
 
       // ── Passengers ───────────────────────────────────────────────────────────
+      // The two-panel sliding door opens symmetrically at the carriage's
+      // door-center, so boarders/alighters target the door-center directly.
+      const DOOR_ENTRY_X_OFFSET = 0;
       const skinTones  = [0xf5c5a3, 0xe8a87c, 0xd4876a, 0xc26b3a, 0x8d4a2a, 0xfad5b0];
       const coatColors = [0x1a3a6e, 0x8b1a1a, 0x1a5c1a, 0x4a4a8a, 0x5c3a1a, 0x2a2a2a];
       const shirtColors = [0xffffff, 0xd4e8ff, 0xfff0d0, 0xffd0d0, 0xd0ffd4, 0xf0f0f0];
@@ -420,13 +542,17 @@ export function useThreeScene(mountRef, rainCanvasRef, callbacks) {
         g.add(mkBox(0.22, 0.95, 0.3, tr,  0.15, 0.5, 0));
         g.add(mkBox(0.22, 0.12, 0.35, dkMat, -0.15, 0.03, 0.04));
         g.add(mkBox(0.22, 0.12, 0.35, dkMat,  0.15, 0.03, 0.04));
+        let umbrella = null;
         if (i < 4) {
-          g.add(mkCyl(0.02, 0.02, 1.3, 6, dkMat, 0.32, 1.85, 0));
+          umbrella = new THREE.Group();
+          umbrella.add(mkCyl(0.02, 0.02, 1.7, 6, dkMat, 0.32, 2.06, 0));
           const can = new THREE.Mesh(
             new THREE.ConeGeometry(0.58, 0.28, 12),
             mkMat({ color: umbColors[i % 6], roughness: 0.7, transparent: true, opacity: 0.9 })
           );
-          can.position.set(0.32, 2.62, 0); g.add(can);
+          can.position.set(0.32, 3.05, 0); umbrella.add(can);
+          umbrella.visible = s.rainI > 0.02;
+          g.add(umbrella);
         } else {
           g.add(mkBox(0.32, 0.28, 0.18,
             mkMat({ color: new THREE.Color().setHSL(i * 0.15, 0.5, 0.25), roughness: 0.7 }),
@@ -438,6 +564,8 @@ export function useThreeScene(mountRef, rainCanvasRef, callbacks) {
           dir: Math.random() < 0.5 ? 1 : -1, walkT: Math.random() * 3,
           ox: px, oz: pz, spd: 1.7 + Math.random() * 1.1,
           state: "idle", boardDelay: 0, waitT: 0, boardT: 0,
+          umbrella,
+          doorOffset: i % 2 === 0 ? -8 : 8,
         };
         scene.add(g); passengers.push(g); clickables.push(g);
       }
@@ -471,10 +599,11 @@ export function useThreeScene(mountRef, rainCanvasRef, callbacks) {
         g.add(mkBox(0.4, 0.36, 0.22,
           mkMat({ color: new THREE.Color().setHSL(aHues[i], 0.55, 0.25), roughness: 0.7 }),
           -0.4, 1.0, 0));
-        const sx = (trainG.position.x - 8) + (i % 3 - 1) * 2;
+        const doorOffset = i % 2 === 0 ? -8 : 8;
+        const sx = trainG.position.x + doorOffset;
         g.position.set(sx, 0.42, -3.2); g.visible = false;
         g.userData = {
-          type: "alighter", startX: sx,
+          type: "alighter", startX: sx, doorOffset,
           destX: -12 + i * 5 + Math.random() * 3, destZ: 5 + Math.random() * 2,
           state: "waiting", waitT: i * 1.2, exitT: 0, spd: 1.9 + Math.random() * 0.9,
         };
@@ -485,7 +614,7 @@ export function useThreeScene(mountRef, rainCanvasRef, callbacks) {
       s.resetAlighters = () => {
         alighters.forEach((a, i) => {
           a.visible = false; a.userData.state = "waiting"; a.userData.waitT = i * 1.2; a.userData.exitT = 0;
-          a.position.set((trainG.position.x - 8) + (i % 3 - 1) * 2, 0.42, -3.2);
+          a.position.set(trainG.position.x + a.userData.doorOffset, 0.42, -3.2);
         });
       };
 
@@ -505,8 +634,9 @@ export function useThreeScene(mountRef, rainCanvasRef, callbacks) {
         g.userData = { type: "lamp", idx, on: true };
         scene.add(g); clickables.push(g);
       }
-      makeLamp(-6, lb1, 1);
-      makeLamp(6,  lb2, 2);
+      // Removed: the two platform lamp posts at x=±6 sat under the roof at z=5.5
+      // with bulbs at y=7.54 — inside the roof box (y=7.375-7.625) — so they
+      // were visible through the roof from above and below.
 
       // ── Lamp glow halos (billboard sprites, AdditiveBlending) ─────────────────
       function makeGlowTex(rv, gv, bv) {
@@ -531,26 +661,105 @@ export function useThreeScene(mountRef, rainCanvasRef, callbacks) {
         sp.position.set(x, y, z); sp.scale.set(sz, sz, 1);
         scene.add(sp); return sp;
       }
-      // Lamp A: post x=-6, arm +1.5 → bulb world x=-4.5, y=0.42+7.12=7.54, z=5.5
-      // Lamp B: post x=+6, arm +1.5 → bulb world x=+7.5, y=7.54, z=5.5
-      const glow1 = addGlow(-4.5, 7.54, 5.5, 6.5);
-      const glow2 = addGlow( 7.5, 7.54, 5.5, 6.5);
-      s.glow1 = glow1; s.glow2 = glow2;
-
-      // Ground light pools — warm amber splash on platform under each lamp
-      [[-4.5, 4.8], [7.5, 4.8]].forEach(([px, pz]) => {
-        const pm = new THREE.MeshBasicMaterial({
-          map: poolTex, transparent: true, depthWrite: false,
-          blending: THREE.AdditiveBlending, opacity: 0.18,
-        });
-        const pool = new THREE.Mesh(new THREE.PlaneGeometry(9, 5), pm);
-        pool.rotation.x = -Math.PI / 2; pool.position.set(px, 0.02, pz);
-        scene.add(pool);
-      });
+      // Glow halos and ground pools for the removed platform lamps are gone too.
+      // s.glow1 / s.glow2 stay undefined; existing code already guards with
+      // `if (s.glow1)` / `if (s.glow2)`.
 
       // ── Platform roof & furniture ─────────────────────────────────────────────
-      scene.add(mkBox(22, 0.25, 4.5, roofMat, 0, 7.5, 4.5));
+      scene.add(mkBox(22, 0.25, 4.5, platformRoofMat, 0, 7.5, 4.5));
       [-9, 0, 9].forEach((x) => scene.add(mkBox(0.3, 7.5, 0.3, lpostMat, x, 3.75, 2.5)));
+
+      // ── Street lights (behind platform, lining the back edge) ────────────────
+      const streetLights = [];
+      const streetBulbMats = [];
+      [-18, 0, 18].forEach((sx) => {
+        const baseY = 0.4;
+        // Pole geometry: pole top sits at y = baseY + 0.35 + 6.6 = 7.35
+        const poleTopY = baseY + 0.35 + 6.6;
+        const armY     = poleTopY - 0.05;          // arm centerline just below pole top
+        const lampZ    = 6.3;                      // lamp head hangs at this z
+        const poleZ    = 8.5;                      // pole sits at this z
+        const armLen   = poleZ - lampZ;            // 2.2
+        const armCZ    = (poleZ + lampZ) / 2;      // 7.4
+
+        // Plinth at the base
+        scene.add(mkCyl(0.22, 0.26, 0.35, 12, lpostMat, sx, baseY + 0.175, poleZ));
+        // Tapered vertical pole
+        scene.add(mkCyl(0.07, 0.11, 6.6, 10, lpostMat, sx, baseY + 0.35 + 3.3, poleZ));
+        // Horizontal arm from pole top to lamp head (no rotation — clean orthogonal)
+        scene.add(mkBox(0.09, 0.09, armLen, lpostMat, sx, armY, armCZ));
+        // Vertical bulb-connecting rod hanging from the end of the arm down to the shade
+        scene.add(mkBox(0.07, 0.5, 0.07, lpostMat, sx, armY - 0.27, lampZ));
+        // Lamp head: cone shade pointing down
+        const shade = new THREE.Mesh(new THREE.ConeGeometry(0.34, 0.45, 14), lpostMat);
+        shade.position.set(sx, armY - 0.62, lampZ);
+        shade.rotation.x = Math.PI; scene.add(shade);
+        // Glowing bulb under the shade
+        const bulbMat = mkMat({
+          color: 0xffd089, emissive: 0xffa040, emissiveIntensity: 1.8, roughness: 0.4,
+        });
+        const bulb = mkSph(0.16, bulbMat, sx, armY - 0.85, lampZ);
+        bulb.scale.y = 0.7; scene.add(bulb);
+        streetBulbMats.push(bulbMat);
+        // Warm spot light pooling on the platform below
+        const sp = new THREE.SpotLight(0xffb060, 6, 22, Math.PI * 0.34, 0.55, 1.4);
+        sp.position.set(sx, armY - 0.7, lampZ);
+        sp.target.position.set(sx, 0, lampZ - 1);
+        scene.add(sp); scene.add(sp.target);
+        streetLights.push(sp);
+        // Soft ground pool
+        const pm = new THREE.MeshBasicMaterial({
+          map: poolTex, transparent: true, depthWrite: false,
+          blending: THREE.AdditiveBlending, opacity: 0.32,
+        });
+        const pool = new THREE.Mesh(new THREE.PlaneGeometry(5.5, 5.5), pm);
+        pool.rotation.x = -Math.PI / 2; pool.position.set(sx, 0.02, 5.6);
+        scene.add(pool);
+      });
+      s.streetLights = streetLights;
+      s.streetBulbMats = streetBulbMats;
+
+      // ── Under-roof hanging lights (illuminate the shelter) ───────────────────
+      // Pendant fixtures hang on a long stem clearly below the roof's underside
+      // (roof bottom y=7.375). All emissive geometry sits well beneath the roof
+      // so it cannot be visible from above. The narrow cone keeps the floor
+      // splash within the roof's footprint so light doesn't appear to leak past
+      // the edges.
+      const roofSpots = [];
+      const roofBulbMats = [];
+      [-7, 0, 7].forEach((rx) => {
+        // Long stem — top at roof bottom (7.375), bottom at housing top (~6.76)
+        scene.add(mkBox(0.04, 0.62, 0.04, lpostMat, rx, 7.065, 4.5));
+        // Cylindrical housing hanging below the stem
+        const housing = mkCyl(0.22, 0.26, 0.12, 12, lpostMat, rx, 6.70, 4.5);
+        scene.add(housing);
+        // Warm glowing bulb / diffuser facing down
+        const bulbMat = mkMat({
+          color: 0xffe0a8, emissive: 0xffb060, emissiveIntensity: 1.4, roughness: 0.5,
+        });
+        const bulb = mkSph(0.13, bulbMat, rx, 6.62, 4.5);
+        bulb.scale.y = 0.55;
+        scene.add(bulb);
+        roofBulbMats.push(bulbMat);
+
+        const sp = new THREE.SpotLight(0xffb870, 14, 16, Math.PI * 0.26, 0.5, 1.4);
+        sp.position.set(rx, 6.60, 4.5);
+        sp.target.position.set(rx, 0, 4.5);
+        scene.add(sp); scene.add(sp.target);
+        roofSpots.push(sp);
+
+        const pm = new THREE.MeshBasicMaterial({
+          map: poolTex, transparent: true, depthWrite: false,
+          blending: THREE.AdditiveBlending, opacity: 0.36,
+        });
+        const pool = new THREE.Mesh(new THREE.PlaneGeometry(5.2, 4.4), pm);
+        pool.rotation.x = -Math.PI / 2;
+        pool.position.set(rx, 0.03, 4.5);
+        scene.add(pool);
+      });
+      s.roofSpots = roofSpots;
+      s.roofBulbMats = roofBulbMats;
+
       scene.add(mkBox(6,   1.2, 0.1,  mkMat({ color: 0x08121e, roughness: 0.7 }), 0, 6.5, 2.5));
       scene.add(mkBox(5.6, 0.9, 0.12, mkMat({ color: 0x0e2035, emissive: 0x0a2040, emissiveIntensity: 0.5 }), 0, 6.5, 2.57));
       scene.add(mkBox(3, 0.1, 0.7, concMat, 4, 1.15, 5.8));
@@ -559,6 +768,11 @@ export function useThreeScene(mountRef, rainCanvasRef, callbacks) {
       // ── Platform benches ───────────────────────────────────────────────────────
       const benchWoodMat = mkMat({ color: 0x2d1a0c, roughness: 0.88, metalness: 0.05 });
       const benchIronMat = mkMat({ color: 0x18202a, roughness: 0.6,  metalness: 0.65 });
+      // Footprint: seat 2.8 wide × 0.52 deep, plus a body-radius margin so
+      // walking people and pets don't visually clip into the woodwork.
+      const benchColliders = [];
+      s.benchColliders = benchColliders;
+      const BENCH_MARGIN = 0.32;
       function makeBench(bx, bz) {
         const g = new THREE.Group();
         g.add(mkBox(2.8, 0.08, 0.52, benchWoodMat, 0, 0.88, 0));
@@ -570,10 +784,232 @@ export function useThreeScene(mountRef, rainCanvasRef, callbacks) {
           g.add(mkBox(0.06, 0.06, 0.42, benchIronMat, lx, 0.22,  0));
         });
         g.position.set(bx, 0.42, bz); scene.add(g);
+        benchColliders.push({
+          minX: bx - 1.4 - BENCH_MARGIN, maxX: bx + 1.4 + BENCH_MARGIN,
+          minZ: bz - 0.26 - BENCH_MARGIN, maxZ: bz + 0.26 + BENCH_MARGIN,
+        });
       }
       makeBench(-10, 6.5);
       makeBench(  2, 6.5);
       makeBench( 14, 6.5);
+
+      function pointInBench(x, z) {
+        for (let i = 0; i < benchColliders.length; i++) {
+          const b = benchColliders[i];
+          if (x >= b.minX && x <= b.maxX && z >= b.minZ && z <= b.maxZ) return true;
+        }
+        return false;
+      }
+      // If the next position would enter a bench (and we weren't already inside
+      // one), try sliding x-only then z-only so the agent steers around it.
+      // Returns the chosen {x, z}; falls back to holding position.
+      function stepAroundBenches(curX, curZ, nextX, nextZ) {
+        if (pointInBench(curX, curZ)) return { x: nextX, z: nextZ };
+        if (!pointInBench(nextX, nextZ)) return { x: nextX, z: nextZ };
+        if (!pointInBench(nextX, curZ)) return { x: nextX, z: curZ };
+        if (!pointInBench(curX, nextZ)) return { x: curX, z: nextZ };
+        return { x: curX, z: curZ };
+      }
+      s.pointInBench = pointInBench;
+      s.stepAroundBenches = stepAroundBenches;
+
+      // ── Seated people on benches ──────────────────────────────────────────────
+      // Sitters use the same palette as walking passengers. Some hold open
+      // newspapers; others rest hands on lap. Bench seat surface sits at world
+      // y ≈ 1.34, so the figure group is anchored there.
+      const seated = [];
+      s.seated = seated;
+      function makeSeatedPerson(bx, bz, opts = {}) {
+        const i = opts.colorIndex ?? Math.floor(Math.random() * 6);
+        const newspaper = !!opts.newspaper;
+        const facing = opts.facing ?? 0; // 0 = face +z (back to backrest)
+        const g = new THREE.Group();
+        const sk = mkMat({ color: skinTones[i % 6], roughness: 0.85 });
+        const ct = mkMat({ color: coatColors[i % 6], roughness: 0.8, metalness: 0.05 });
+        const sh = mkMat({ color: shirtColors[i % 6], roughness: 0.9 });
+        const hr = mkMat({ color: hairColors[i % 6], roughness: 0.9 });
+        const tr = mkMat({ color: new THREE.Color(coatColors[i % 6]).offsetHSL(0, 0, -0.2), roughness: 0.85 });
+        // Torso
+        g.add(mkBox(0.52, 0.7, 0.38, ct, 0, 0.4, 0));
+        // Shirt collar
+        g.add(mkBox(0.28, 0.16, 0.3, sh, 0, 0.83, 0.05));
+        // Neck
+        g.add(mkCyl(0.1, 0.1, 0.16, 8, sk, 0, 0.97, 0));
+        // Head
+        const head = new THREE.Mesh(new THREE.SphereGeometry(0.22, 12, 10), sk);
+        head.scale.y = 1.15; head.position.set(0, 1.22, 0); head.castShadow = true; g.add(head);
+        // Hair
+        const hairM = new THREE.Mesh(new THREE.SphereGeometry(0.23, 10, 8), hr);
+        hairM.position.set(0, 1.34, -0.02); hairM.scale.set(1, 0.7, 1); g.add(hairM);
+        // Eyes
+        [-0.07, 0.07].forEach((ex) => {
+          const eye = new THREE.Mesh(new THREE.SphereGeometry(0.028, 6, 6), mkMat({ color: 0x111111, roughness: 1 }));
+          eye.position.set(ex, 1.24, 0.2); g.add(eye);
+        });
+        // Upper arms (shoulder to elbow), hanging slightly forward
+        const upArmL = mkBox(0.16, 0.55, 0.18, ct, -0.34, 0.45, 0.02);
+        const upArmR = mkBox(0.16, 0.55, 0.18, ct,  0.34, 0.45, 0.02);
+        g.add(upArmL); g.add(upArmR);
+        if (newspaper) {
+          // Forearms come forward and up to hold the paper
+          const fL = mkBox(0.16, 0.42, 0.18, ct, -0.26, 0.32, 0.32);
+          const fR = mkBox(0.16, 0.42, 0.18, ct,  0.26, 0.32, 0.32);
+          fL.rotation.x = -0.55; fR.rotation.x = -0.55;
+          g.add(fL); g.add(fR);
+          // Hands
+          g.add(mkSph(0.085, sk, -0.22, 0.48, 0.52));
+          g.add(mkSph(0.085, sk,  0.22, 0.48, 0.52));
+          // Newspaper — open spread, slightly tilted toward reader
+          const paperMat = mkMat({ color: 0xeae3d2, roughness: 0.95, side: THREE.DoubleSide });
+          const paper = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.5), paperMat);
+          paper.position.set(0, 0.55, 0.55); paper.rotation.x = -0.55; g.add(paper);
+          // Center fold (subtle dark line)
+          const fold = mkBox(0.005, 0.5, 0.002, mkMat({ color: 0xa39c8a, roughness: 1 }), 0, 0.55, 0.555);
+          fold.rotation.x = -0.55; g.add(fold);
+          // Ink lines — text approximation
+          const inkMat = mkMat({ color: 0x1a1a1a, roughness: 1 });
+          [-0.18, -0.10, -0.02, 0.06, 0.14].forEach((dy, li) => {
+            const w = 0.28 - (li % 2) * 0.05;
+            [-0.17, 0.17].forEach((cx) => {
+              const ln = mkBox(w, 0.012, 0.002, inkMat, cx, 0.55 + dy, 0.557);
+              ln.rotation.x = -0.55; g.add(ln);
+            });
+          });
+          // Headline — bolder bar at top
+          const hd = mkBox(0.5, 0.04, 0.002, inkMat, 0, 0.78, 0.563);
+          hd.rotation.x = -0.55; g.add(hd);
+        } else {
+          // Hands resting on lap
+          g.add(mkSph(0.1, sk, -0.32, 0.06, 0.22));
+          g.add(mkSph(0.1, sk,  0.32, 0.06, 0.22));
+        }
+        // Thighs — horizontal forward from hips
+        g.add(mkBox(0.22, 0.25, 0.55, tr, -0.14, -0.05, 0.27));
+        g.add(mkBox(0.22, 0.25, 0.55, tr,  0.14, -0.05, 0.27));
+        // Shins — vertical, dropping from knees
+        g.add(mkBox(0.22, 0.7, 0.22, tr, -0.14, -0.5, 0.55));
+        g.add(mkBox(0.22, 0.7, 0.22, tr,  0.14, -0.5, 0.55));
+        // Feet
+        g.add(mkBox(0.24, 0.1, 0.4, dkMat, -0.14, -0.9, 0.6));
+        g.add(mkBox(0.24, 0.1, 0.4, dkMat,  0.14, -0.9, 0.6));
+
+        g.position.set(bx, 1.34, bz);
+        g.rotation.y = facing;
+        g.userData = {
+          type: "seated", newspaper,
+          bobPhase: Math.random() * Math.PI * 2,
+          headBobPhase: Math.random() * Math.PI * 2,
+        };
+        scene.add(g); seated.push(g); clickables.push(g);
+        return g;
+      }
+
+      // Bench at x=-10 — two riders, left one reading newspaper
+      makeSeatedPerson(-10.7, 6.5, { colorIndex: 1, newspaper: true });
+      makeSeatedPerson( -9.3, 6.5, { colorIndex: 4, newspaper: false });
+      // Bench at x=2 — solo reader
+      makeSeatedPerson(  2.4, 6.5, { colorIndex: 2, newspaper: true });
+      // Bench at x=14 — two riders, right one reading newspaper
+      makeSeatedPerson( 13.3, 6.5, { colorIndex: 5, newspaper: false });
+      makeSeatedPerson( 14.7, 6.5, { colorIndex: 0, newspaper: true });
+
+      // ── Stray dog & cat — appear and wander intermittently ────────────────────
+      function makeDog() {
+        const g = new THREE.Group();
+        const furMat  = mkMat({ color: 0x6b4a2a, roughness: 0.92 });
+        const bellyMat = mkMat({ color: 0xb89770, roughness: 0.92 });
+        const noseMat = mkMat({ color: 0x111111, roughness: 1 });
+        const eyeMat  = mkMat({ color: 0x111111, roughness: 1 });
+        // Body — long axis is +x (head forward, tail back)
+        g.add(mkBox(0.95, 0.4, 0.45, furMat, 0, 0.45, 0));
+        g.add(mkBox(0.85, 0.18, 0.42, bellyMat, 0, 0.31, 0));
+        // Head sub-group at front
+        const head = new THREE.Group();
+        head.add(mkBox(0.38, 0.34, 0.4, furMat, 0, 0, 0));
+        // Snout (along +x)
+        head.add(mkBox(0.26, 0.18, 0.22, furMat, 0.28, -0.08, 0));
+        head.add(mkSph(0.05, noseMat, 0.42, -0.05, 0));
+        head.add(mkSph(0.035, eyeMat, 0.2, 0.06, -0.11));
+        head.add(mkSph(0.035, eyeMat, 0.2, 0.06,  0.11));
+        // Floppy ears, drooping on the sides
+        const earL = mkBox(0.06, 0.22, 0.1, furMat, -0.05, 0.05, -0.16);
+        const earR = mkBox(0.06, 0.22, 0.1, furMat, -0.05, 0.05,  0.16);
+        earL.rotation.x = -0.3; earR.rotation.x =  0.3;
+        head.add(earL); head.add(earR);
+        head.position.set(0.55, 0.62, 0); g.add(head);
+        // Tail — pivoted at hindquarters for proper wag
+        const tailPivot = new THREE.Group();
+        tailPivot.position.set(-0.45, 0.55, 0);
+        const tailBox = mkBox(0.5, 0.1, 0.1, furMat, -0.25, 0.05, 0);
+        tailBox.rotation.z = 0.3; // angle up slightly
+        tailPivot.add(tailBox);
+        g.add(tailPivot);
+        // Legs — paired front/back
+        [[ 0.3, -0.16], [ 0.3,  0.16], [-0.3, -0.16], [-0.3,  0.16]].forEach(([lx, lz]) => {
+          g.add(mkBox(0.13, 0.32, 0.13, furMat, lx, 0.16, lz));
+        });
+        g.userData = { tail: tailPivot };
+        return g;
+      }
+
+      function makeCat() {
+        const g = new THREE.Group();
+        const furMat = mkMat({ color: 0x2a2a2a, roughness: 0.95 });
+        const noseMat = mkMat({ color: 0xd88a8a, roughness: 1 });
+        const eyeMat  = mkMat({ color: 0xc8e84a, roughness: 0.6, emissive: 0x4a5810, emissiveIntensity: 0.4 });
+        // Sleek body — long axis is +x
+        g.add(mkBox(0.7, 0.26, 0.3, furMat, 0, 0.38, 0));
+        // Head sub-group at front
+        const head = new THREE.Group();
+        head.add(mkBox(0.28, 0.26, 0.28, furMat, 0, 0, 0));
+        head.add(mkSph(0.03, noseMat, 0.16, -0.04, 0));
+        head.add(mkSph(0.025, eyeMat, 0.13, 0.05, -0.08));
+        head.add(mkSph(0.025, eyeMat, 0.13, 0.05,  0.08));
+        // Pointy ears — cones standing up on top of head
+        const earL = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.18, 6), furMat);
+        earL.position.set(0, 0.2, -0.1); earL.castShadow = true;
+        const earR = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.18, 6), furMat);
+        earR.position.set(0, 0.2,  0.1); earR.castShadow = true;
+        head.add(earL); head.add(earR);
+        head.position.set(0.42, 0.5, 0); g.add(head);
+        // Tail — pivoted at hindquarters; curls upward
+        const tailPivot = new THREE.Group();
+        tailPivot.position.set(-0.32, 0.5, 0);
+        const tailBox = mkBox(0.55, 0.08, 0.08, furMat, -0.27, 0.1, 0);
+        tailBox.rotation.z = 0.65; // strong upward curl
+        tailPivot.add(tailBox);
+        g.add(tailPivot);
+        // Slim legs
+        [[ 0.22, -0.1], [ 0.22,  0.1], [-0.22, -0.1], [-0.22,  0.1]].forEach(([lx, lz]) => {
+          g.add(mkBox(0.1, 0.26, 0.1, furMat, lx, 0.13, lz));
+        });
+        g.userData = { tail: tailPivot };
+        return g;
+      }
+
+      const dog = makeDog();
+      dog.position.set(-4, 0.42, 4);
+      dog.visible = false;
+      dog.userData = {
+        ...dog.userData,
+        type: "pet", kind: "dog", visible: false,
+        cooldown: 6 + Math.random() * 10, lifetime: 0,
+        targetX: 0, targetZ: 4, spd: 1.6,
+      };
+      scene.add(dog); clickables.push(dog);
+      s.dog = dog;
+
+      const cat = makeCat();
+      cat.position.set(8, 0.42, 5);
+      cat.visible = false;
+      cat.userData = {
+        ...cat.userData,
+        type: "pet", kind: "cat", visible: false,
+        cooldown: 12 + Math.random() * 16, lifetime: 0,
+        targetX: 0, targetZ: 5, spd: 1.1,
+      };
+      scene.add(cat); clickables.push(cat);
+      s.cat = cat;
 
       // ── Station clock (hands driven from real time) ────────────────────────────
       (function() {
@@ -788,9 +1224,9 @@ export function useThreeScene(mountRef, rainCanvasRef, callbacks) {
       for (let i = 0; i < RN; i++) initDrop(i);
       rGeo.setAttribute("position", new THREE.BufferAttribute(rArr, 3));
       const rMesh = new THREE.Points(rGeo, new THREE.ShaderMaterial({
-        transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
-        vertexShader:   `void main(){vec4 mv=modelViewMatrix*vec4(position,1.);gl_PointSize=1.8;gl_Position=projectionMatrix*mv;}`,
-        fragmentShader: `void main(){gl_FragColor=vec4(.52,.7,.9,.28);}`,
+        transparent: true, depthWrite: false,
+        vertexShader:   `void main(){vec4 mv=modelViewMatrix*vec4(position,1.);gl_PointSize=max(2.,22./-mv.z);gl_Position=projectionMatrix*mv;}`,
+        fragmentShader: `void main(){vec2 p=gl_PointCoord-.5;float d=length(vec2(p.x*1.5,p.y));if(d>.5)discard;gl_FragColor=vec4(.78,.88,1.,smoothstep(.5,.0,d)*.85);}`,
       }));
       scene.add(rMesh);
 
@@ -803,7 +1239,7 @@ export function useThreeScene(mountRef, rainCanvasRef, callbacks) {
         skArr[i * 6 + 3] = sx - 0.12; skArr[i * 6 + 4] = sy - 1.4; skArr[i * 6 + 5] = sz;
       }
       skGeo.setAttribute("position", new THREE.BufferAttribute(skArr, 3));
-      const skMat = new THREE.LineBasicMaterial({ color: 0x78acd0, transparent: true, opacity: 0.13 });
+      const skMat = new THREE.LineBasicMaterial({ color: 0xb8d4ee, transparent: true, opacity: 0.55 });
       const streaks = new THREE.LineSegments(skGeo, skMat);
       scene.add(streaks);
       s.rain = { rGeo, rArr, rVel, skGeo, skArr, skMat, rMesh, streaks, initDrop };
@@ -1078,14 +1514,22 @@ export function useThreeScene(mountRef, rainCanvasRef, callbacks) {
           // Passengers still active — wait 6s and try again
           s.autoCycleTimer = setTimeout(autoDepart, 6000); return;
         }
-        s.tState = "departing"; s.tTargX = -90; s.tVel = 0;
-        setTrainStatusText("● Departing"); setTrainStatusColor("rgba(255,160,80,.8)");
-        setBtnTrainText("🚂 Arrive");
+        // Close doors first, give the slide animation time to finish, then depart.
+        doorMeshes.forEach((dm) => (dm.userData.open = false));
+        setDoorStatus("Doors — Closed");
         playDoorChime();
-        setTimeout(() => horn(), 600);
-        setTimeout(() => setEngVol(0.16, 1.5), 1000);
-        triggerAnn(ANNOUNCEMENTS[5]);
-        showToast("Train departing — auto cycle");
+        showToast("🚪 Doors closing — train departing soon");
+        clearTimeout(s.doorCloseTimer);
+        s.doorCloseTimer = setTimeout(() => {
+          if (s.tState !== "stopped") return;
+          s.tState = "departing"; s.tTargX = -90; s.tVel = 0;
+          setTrainStatusText("● Departing"); setTrainStatusColor("rgba(255,160,80,.8)");
+          setBtnTrainText("🚂 Arrive");
+          horn();
+          setTimeout(() => setEngVol(0.16, 1.5), 400);
+          triggerAnn(ANNOUNCEMENTS[5]);
+          showToast("Train departing — auto cycle");
+        }, 1500);
       }
 
       function autoArrive() {
@@ -1132,10 +1576,28 @@ export function useThreeScene(mountRef, rainCanvasRef, callbacks) {
         tg1.intensity = Math.max(0, 2.5 - tod * 8); tg2.intensity = Math.max(0, 2.5 - tod * 8);
         lp1.intensity = Math.max(0, (s.l1on ? 4 : 0) * (1 - tod * 1.2));
         lp2.intensity = Math.max(0, (s.l2on ? 4 : 0) * (1 - tod * 1.2));
+        // Under-roof shelter lights — bright at night, off in daylight
+        if (s.roofSpots) {
+          const ri = Math.max(0, 12 * (1 - tod * 1.2));
+          s.roofSpots.forEach((sp) => { sp.intensity = ri; });
+          if (s.roofBulbMats) {
+            const ei = Math.max(0, 2.4 * (1 - tod * 1.1));
+            s.roofBulbMats.forEach((m) => { m.emissiveIntensity = ei; });
+          }
+        }
+        // Street lights — same night-bright, day-off behaviour
+        if (s.streetLights) {
+          const si = Math.max(0, 6 * (1 - tod * 1.2));
+          s.streetLights.forEach((sp) => { sp.intensity = si; });
+          if (s.streetBulbMats) {
+            const ei = Math.max(0, 2.0 * (1 - tod * 1.1));
+            s.streetBulbMats.forEach((m) => { m.emissiveIntensity = ei; });
+          }
+        }
         hLight.intensity = Math.max(0, 8 * (1 - tod * 1.5));
         // Clamp exposure — was reaching 1.75 which washed everything out
         renderer.toneMappingExposure = 0.50 + tod * 0.52;  // max ≈ 1.02
-        if (rainCanvasRef.current) rainCanvasRef.current.style.opacity = String(0.5 - tod * 0.3);
+        if (rainCanvasRef.current) rainCanvasRef.current.style.opacity = String(0.85 - tod * 0.25);
 
         // Train body colour shift
         bodyMat.color.setRGB(0.12 + tod * 0.2, 0.29 + tod * 0.25, 0.53 + tod * 0.18);
@@ -1277,7 +1739,14 @@ export function useThreeScene(mountRef, rainCanvasRef, callbacks) {
               trainG.position.x = s.tTargX; s.tVel = 0; s.tState = "stopped";
               setTrainStatusText("● Stopped"); setTrainStatusColor("rgba(180,205,230,.5)");
               setBtnTrainText("🚂 Depart"); setEngVol(0.04, 1.5); playScreech();
-              setTimeout(() => playDoorChime(), 1800);
+              // Open doors right when the chime plays so passengers can board/alight.
+              clearTimeout(s.doorOpenTimer);
+              s.doorOpenTimer = setTimeout(() => {
+                if (s.tState !== "stopped") return;
+                playDoorChime();
+                doorMeshes.forEach((dm) => (dm.userData.open = true));
+                setDoorStatus("Doors — Open");
+              }, 1800);
               // "Mind the gap when boarding" — correct for a stopped train
               clearTimeout(s.pendingAnnTimer);
               s.pendingAnnTimer = setTimeout(() => triggerAnn(ANNOUNCEMENTS[3]), 2800);
@@ -1305,10 +1774,13 @@ export function useThreeScene(mountRef, rainCanvasRef, callbacks) {
           trainG.position.y  = Math.sin(T * 0.8) * 0.04;
         }
 
-        // Doors
+        // Doors — animate both panels of each two-panel sliding door.
         doorMeshes.forEach((dm) => {
-          const tgt = dm.userData.open ? 1.65 : 0;
-          dm.position.x += (tgt - dm.position.x) * 0.08;
+          const ud = dm.userData;
+          const tgtL = ud.baseLX + (ud.open ? -ud.slide : 0);
+          const tgtR = ud.baseRX + (ud.open ?  ud.slide : 0);
+          ud.left.position.x  += (tgtL - ud.left.position.x)  * 0.09;
+          ud.right.position.x += (tgtR - ud.right.position.x) * 0.09;
         });
 
         // Alighters
@@ -1319,7 +1791,7 @@ export function useThreeScene(mountRef, rainCanvasRef, callbacks) {
             ud.waitT -= dt;
             if (ud.waitT <= 0) {
               a.visible = true;
-              a.position.set((trainG.position.x - 8) + (ai % 3 - 1) * 2, 0.42, -2.5);
+              a.position.set(trainG.position.x + ud.doorOffset + DOOR_ENTRY_X_OFFSET, 0.42, -2.5);
               ud.state = "exiting"; ud.exitT = 0;
               doorMeshes.forEach((dm) => dm.userData.open = true); setDoorStatus("Doors — Open");
             }
@@ -1332,7 +1804,10 @@ export function useThreeScene(mountRef, rainCanvasRef, callbacks) {
             if (dist < 0.4) {
               ud.state = "standing"; a.rotation.y = Math.PI / 2 * (Math.random() < 0.5 ? 1 : -1); a.position.y = 0.42;
             } else {
-              a.position.x += dx2 / dist * ud.spd * dt; a.position.z += dz2 / dist * ud.spd * dt;
+              const nx = a.position.x + dx2 / dist * ud.spd * dt;
+              const nz = a.position.z + dz2 / dist * ud.spd * dt;
+              const step = stepAroundBenches(a.position.x, a.position.z, nx, nz);
+              a.position.x = step.x; a.position.z = step.z;
               a.rotation.y = Math.atan2(dx2, dz2); a.position.y = 0.42 + Math.abs(Math.sin(T * 5 + ud.destX)) * 0.015;
             }
           } else if (ud.state === "standing") {
@@ -1342,8 +1817,10 @@ export function useThreeScene(mountRef, rainCanvasRef, callbacks) {
         });
 
         // Passengers
+        const isRaining = s.rainI > 0.02;
         passengers.forEach((p, pi) => {
           const ud = p.userData;
+          if (ud.umbrella && ud.umbrella.visible !== isRaining) ud.umbrella.visible = isRaining;
           if (ud.waving) {
             ud.wt += dt; const arm = p.children[2]; if (arm) arm.rotation.z = Math.sin(ud.wt * 8) * 0.6;
             if (ud.wt > 2.5) { ud.waving = false; if (p.children[2]) p.children[2].rotation.z = 0; }
@@ -1364,28 +1841,33 @@ export function useThreeScene(mountRef, rainCanvasRef, callbacks) {
             return;
           }
           if (ud.state === "queuing") {
-            const doorX = trainG.position.x - 8, doorZ = -2.5;
-            const dx2 = doorX - p.position.x, dz2 = doorZ - p.position.z;
-            const dist = Math.sqrt(dx2 * dx2 + dz2 * dz2);
-            if (dist < 0.3) {
+            const doorX = trainG.position.x + ud.doorOffset + DOOR_ENTRY_X_OFFSET;
+            const dx2 = doorX - p.position.x;
+            if (Math.abs(dx2) > 0.08) {
+              p.position.x += Math.sign(dx2) * Math.min(Math.abs(dx2), ud.spd * dt);
+              p.rotation.y = dx2 > 0 ? -Math.PI / 2 : Math.PI / 2;
+              p.position.y = 0.42 + Math.abs(Math.sin(T * 6 + pi)) * 0.015;
+            } else {
+              p.position.x = doorX;
               ud.waitT = (ud.waitT || 0) + dt; p.rotation.y = Math.PI;
               if (ud.waitT > pi * 0.6) {
                 ud.state = "boarding"; ud.boardT = 0;
                 doorMeshes.forEach((dm) => dm.userData.open = true); setDoorStatus("Doors — Open");
               }
-            } else {
-              p.position.x += dx2 / dist * ud.spd * dt; p.position.z += dz2 / dist * ud.spd * dt;
-              p.rotation.y = Math.atan2(dx2, dz2); p.position.y = 0.42 + Math.abs(Math.sin(T * 6 + pi)) * 0.015;
             }
             return;
           }
           if (ud.state === "walkToTrain") {
-            const targetX = ud.ox + (Math.random() - 0.5) * 6, targetZ = 1.5;
+            const doorX = trainG.position.x + ud.doorOffset + DOOR_ENTRY_X_OFFSET;
+            const targetX = doorX, targetZ = 0.5;
             const dx2 = targetX - p.position.x, dz2 = targetZ - p.position.z;
             const dist = Math.sqrt(dx2 * dx2 + dz2 * dz2);
             if (dist < 0.4) { ud.state = "queuing"; ud.waitT = 0; }
             else {
-              p.position.x += dx2 / dist * ud.spd * dt; p.position.z += dz2 / dist * ud.spd * dt;
+              const nx = p.position.x + dx2 / dist * ud.spd * dt;
+              const nz = p.position.z + dz2 / dist * ud.spd * dt;
+              const step = stepAroundBenches(p.position.x, p.position.z, nx, nz);
+              p.position.x = step.x; p.position.z = step.z;
               p.rotation.y = Math.atan2(dx2, dz2); p.position.y = 0.42 + Math.abs(Math.sin(T * 6 + pi)) * 0.015;
             }
             return;
@@ -1397,12 +1879,89 @@ export function useThreeScene(mountRef, rainCanvasRef, callbacks) {
           if (ud.state === "idle") {
             ud.walkT -= dt; if (ud.walkT <= 0) { ud.dir *= -1; ud.walkT = 2 + Math.random() * 3; }
             const nx = p.position.x + ud.dir * ud.spd * dt;
-            if (Math.abs(nx - ud.ox) < 4) {
+            const wasIn = pointInBench(p.position.x, p.position.z);
+            const blocked = !wasIn && pointInBench(nx, p.position.z);
+            if (Math.abs(nx - ud.ox) < 4 && !blocked) {
               p.position.x = nx; p.rotation.y = ud.dir > 0 ? -Math.PI / 2 : Math.PI / 2;
               p.position.y = 0.42 + Math.abs(Math.sin(T * 4 + ud.ox)) * 0.03;
             } else { ud.dir *= -1; }
           }
         });
+
+        // Seated bench-people — gentle breathing, head sway, occasional newspaper rustle
+        if (s.seated) {
+          s.seated.forEach((p) => {
+            const ud = p.userData;
+            // Breathing bob via slight torso scale-y modulation feels expensive;
+            // simpler: shift the whole group up by a tiny sine.
+            p.position.y = 1.34 + Math.sin(T * 1.6 + ud.bobPhase) * 0.012;
+            // Head sway: head is the 4th-added child (index 3 = head sphere). Apply tilt.
+            const head = p.children[3];
+            if (head) head.rotation.y = Math.sin(T * 0.6 + ud.headBobPhase) * 0.18;
+          });
+        }
+
+        // Stray dog & cat — visibility cycle + lazy wandering on the platform
+        function pickAreaPoint(area) {
+          // Avoid landing inside a bench AABB; give up after a few tries.
+          for (let i = 0; i < 8; i++) {
+            const x = area.xMin + Math.random() * (area.xMax - area.xMin);
+            const z = area.zMin + Math.random() * (area.zMax - area.zMin);
+            if (!pointInBench(x, z)) return { x, z };
+          }
+          return { x: area.xMin, z: area.zMin };
+        }
+        function tickPet(pet, area) {
+          if (!pet) return;
+          const ud = pet.userData;
+          ud.cooldown -= dt;
+          if (!ud.visible) {
+            // Hidden — wait for cooldown to expire, then pop in at a random platform spot
+            if (ud.cooldown <= 0) {
+              ud.visible = true; pet.visible = true;
+              const spawn = pickAreaPoint(area);
+              pet.position.set(spawn.x, 0.42, spawn.z);
+              const target = pickAreaPoint(area);
+              ud.targetX = target.x; ud.targetZ = target.z;
+              ud.lifetime = area.life[0] + Math.random() * (area.life[1] - area.life[0]);
+            }
+            return;
+          }
+          // Visible — wander toward target, then pick a new one. Despawn after lifetime.
+          ud.lifetime -= dt;
+          if (ud.lifetime <= 0) {
+            ud.visible = false; pet.visible = false;
+            ud.cooldown = area.gap[0] + Math.random() * (area.gap[1] - area.gap[0]);
+            return;
+          }
+          const dx = ud.targetX - pet.position.x;
+          const dz = ud.targetZ - pet.position.z;
+          const dist = Math.sqrt(dx * dx + dz * dz);
+          if (dist < 0.3) {
+            const target = pickAreaPoint(area);
+            ud.targetX = target.x; ud.targetZ = target.z;
+          } else {
+            const nx = pet.position.x + (dx / dist) * ud.spd * dt;
+            const nz = pet.position.z + (dz / dist) * ud.spd * dt;
+            const step = stepAroundBenches(pet.position.x, pet.position.z, nx, nz);
+            // If we got fully stuck (no valid slide), pick a fresh target so we
+            // don't twitch forever against the bench edge.
+            if (step.x === pet.position.x && step.z === pet.position.z) {
+              const target = pickAreaPoint(area);
+              ud.targetX = target.x; ud.targetZ = target.z;
+            } else {
+              pet.position.x = step.x; pet.position.z = step.z;
+              pet.rotation.y = Math.atan2(dx, dz) - Math.PI / 2;
+              pet.position.y = 0.42 + Math.abs(Math.sin(T * 9 + ud.cooldown)) * 0.04;
+            }
+          }
+          // Tail wag
+          if (ud.tail) {
+            ud.tail.rotation.y = (ud.kind === "cat" ? 0.2 : 0.0) + Math.sin(T * (ud.kind === "cat" ? 3 : 7)) * 0.5;
+          }
+        }
+        tickPet(s.dog, { xMin: -14, xMax: 14, zMin: 3.5, zMax: 6, life: [10, 22], gap: [12, 28] });
+        tickPet(s.cat, { xMin: -14, xMax: 14, zMin: 3.5, zMax: 6, life: [8, 18],  gap: [18, 40] });
 
         // Lamp flicker
         const flk = Math.sin(T * 7) * 0.07 + Math.sin(T * 19) * 0.04 + 1;
@@ -1442,7 +2001,7 @@ export function useThreeScene(mountRef, rainCanvasRef, callbacks) {
               skArr[i * 6 + 3] = nx - 0.12; skArr[i * 6 + 4] = ny - 1.4; skArr[i * 6 + 5] = nz;
             }
           }
-          skGeo.attributes.position.needsUpdate = true; skMat.opacity = 0.04 + ri * 0.14;
+          skGeo.attributes.position.needsUpdate = true; skMat.opacity = 0.25 + ri * 0.55;
         }
         draw2D(dt, ri);
 

@@ -14,9 +14,7 @@ export const FL = ["Clear", "Haze", "Misty", "Thick", "Dense"];
 
 export const CAMS = [
   { t: 0.85, p: 1.12, r: 30 },
-  { t: Math.PI, p: 1.28, r: 16 },
-  { t: Math.PI + 0.04, p: 1.46, r: 5 },
   { t: 0.48, p: 0.32, r: 48 },
 ];
 
-export const CLABELS = ["Platform view", "Front of train", "Cockpit", "Aerial view"];
+export const CLABELS = ["Platform view", "Aerial view"];

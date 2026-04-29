@@ -1,6 +1,11 @@
 import { useState, useRef, useEffect, useCallback } from "react";
+import { chatWithOpenAI, hasOpenAIKey } from "../services/openai.js";
 
 const MONO = "'Share Tech Mono', 'Courier New', monospace";
+const USE_LLM = hasOpenAIKey();
+const HISTORY_LIMIT = 12; // last N user/assistant turns sent to the LLM
+
+const clamp = (n, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, Number(n) || 0));
 
 // ── NLP pattern table ────────────────────────────────────────────────────────
 // Each entry: { test: RegExp, apply?: {...}, action?: string, answer?: string, say: string }
@@ -121,7 +126,7 @@ const FALLBACKS = [
   "Outside my station protocols. Try \"heavy rain\", \"midnight\", \"depart\", or \"aerial view\".",
 ];
 
-const INTRO = `Central Station AI · Online\n\nI control the entire simulation — weather, lighting, trains & cameras.\n\nTry: "stormy midnight" · "golden hour" · "start cinema demo"`;
+const INTRO = `Central Station AI · Online${USE_LLM ? " · LLM" : ""}\n\nI control the entire simulation — weather, lighting, trains & cameras.\n\nTry: "stormy midnight" · "golden hour" · "start cinema demo"`;
 
 // ── Component ────────────────────────────────────────────────────────────────
 
@@ -133,10 +138,20 @@ export function AIAssistant({
   const [msgs,    setMsgs]    = useState([{ role: "ai", text: INTRO }]);
   const [input,   setInput]   = useState("");
   const [thinking, setThinking] = useState(false);
+  const [listening, setListening] = useState(false);
+  const [speaking,  setSpeaking]  = useState(false);
+  const [voiceOut,  setVoiceOut]  = useState(true);
+  const [voiceSupported] = useState(() =>
+    typeof window !== "undefined"
+    && !!(window.SpeechRecognition || window.webkitSpeechRecognition)
+    && "speechSynthesis" in window
+  );
 
-  const endRef   = useRef(null);
-  const inputRef = useRef(null);
-  const ltRef    = useRef(lightningOn);
+  const endRef         = useRef(null);
+  const inputRef       = useRef(null);
+  const ltRef          = useRef(lightningOn);
+  const recognitionRef = useRef(null);
+  const ttsVoiceRef    = useRef(null);
 
   useEffect(() => { ltRef.current = lightningOn; }, [lightningOn]);
 
@@ -147,6 +162,64 @@ export function AIAssistant({
   useEffect(() => {
     if (open) setTimeout(() => inputRef.current?.focus(), 120);
   }, [open]);
+
+  // Pick a pleasant English voice for TTS once the voice list is ready.
+  useEffect(() => {
+    if (!voiceSupported) return;
+    const pick = () => {
+      const voices = window.speechSynthesis.getVoices();
+      if (!voices.length) return;
+      const preferred =
+        voices.find(v => /en[-_](GB|US)/i.test(v.lang) && /Google|Samantha|Daniel|Karen|Serena/i.test(v.name))
+        || voices.find(v => /en[-_](GB|US)/i.test(v.lang))
+        || voices.find(v => v.lang?.startsWith("en"))
+        || voices[0];
+      ttsVoiceRef.current = preferred;
+    };
+    pick();
+    window.speechSynthesis.addEventListener("voiceschanged", pick);
+    return () => window.speechSynthesis.removeEventListener("voiceschanged", pick);
+  }, [voiceSupported]);
+
+  // Cancel any ongoing speech / mic when the panel closes or component unmounts.
+  useEffect(() => {
+    if (!open) {
+      try { recognitionRef.current?.stop(); } catch {}
+      if (voiceSupported) window.speechSynthesis.cancel();
+      setListening(false);
+      setSpeaking(false);
+    }
+  }, [open, voiceSupported]);
+
+  useEffect(() => () => {
+    try { recognitionRef.current?.stop(); } catch {}
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+    }
+  }, []);
+
+  const speak = useCallback((text) => {
+    if (!voiceSupported || !voiceOut || !text) return;
+    const synth = window.speechSynthesis;
+    synth.cancel();
+    // Strip decorative bullets/separators that read awkwardly aloud.
+    const clean = text.replace(/[·•]/g, ",").replace(/\s+/g, " ").trim();
+    const u = new SpeechSynthesisUtterance(clean);
+    if (ttsVoiceRef.current) u.voice = ttsVoiceRef.current;
+    u.rate = 1.0;
+    u.pitch = 1.0;
+    u.volume = 1.0;
+    u.onstart = () => setSpeaking(true);
+    u.onend   = () => setSpeaking(false);
+    u.onerror = () => setSpeaking(false);
+    synth.speak(u);
+  }, [voiceSupported, voiceOut]);
+
+  const stopSpeaking = useCallback(() => {
+    if (!voiceSupported) return;
+    window.speechSynthesis.cancel();
+    setSpeaking(false);
+  }, [voiceSupported]);
 
   const execute = useCallback((p) => {
     if (p.apply) {
@@ -161,32 +234,153 @@ export function AIAssistant({
     if (p.action === "horn")      S.current?.horn?.();
     if (p.action === "cam0")      handleCam(0);
     if (p.action === "cam1")      handleCam(1);
-    if (p.action === "cam2")      handleCam(2);
-    if (p.action === "cam3")      handleCam(3);
+    if (p.action === "cam2")      handleCam(1);
+    if (p.action === "cam3")      handleCam(1);
     if (p.action === "cinematic") playCinematic?.();
     if (p.action === "snow")      handleSnow?.();
   }, [handleTime, handleRain, handleFog, handleWind, handleLightning, handleCam, handleTrain, playCinematic, handleSnow, S]);
 
-  const send = () => {
-    const text = input.trim();
+  // Maps an OpenAI tool call onto the existing handler set.
+  const dispatchTool = useCallback((name, args = {}) => {
+    switch (name) {
+      case "apply_atmosphere": {
+        if (typeof args.time_of_day === "number") handleTime(clamp(args.time_of_day));
+        if (typeof args.rain        === "number") handleRain(clamp(args.rain));
+        if (typeof args.fog         === "number") handleFog(clamp(args.fog));
+        if (typeof args.wind        === "number") handleWind(clamp(args.wind));
+        if (typeof args.lightning_on === "boolean" && args.lightning_on !== ltRef.current) handleLightning();
+        return;
+      }
+      case "dispatch_train": handleTrain(); return;
+      case "sound_horn":     S.current?.horn?.(); return;
+      case "switch_camera": {
+        const map = { platform: 0, aerial: 1, side: 1, front: 1 };
+        const idx = map[args.view];
+        if (idx !== undefined) handleCam(idx);
+        return;
+      }
+      case "play_cinematic": playCinematic?.(); return;
+      case "toggle_snow":    handleSnow?.(); return;
+      default: return;
+    }
+  }, [handleTime, handleRain, handleFog, handleWind, handleLightning, handleCam, handleTrain, playCinematic, handleSnow, S]);
+
+  // Local pattern fallback — used when no OpenAI key is configured.
+  const replyFromPatterns = (text) => {
+    let reply = FALLBACKS[Math.floor(Math.random() * FALLBACKS.length)];
+    for (const p of PATTERNS) {
+      if (p.test.test(text)) {
+        if (!p.answer) execute(p);
+        reply = p.answer ?? p.say;
+        break;
+      }
+    }
+    return reply;
+  };
+
+  const send = async (override) => {
+    const text = (typeof override === "string" ? override : input).trim();
     if (!text || thinking) return;
+    stopSpeaking();
     setInput("");
-    setMsgs((m) => [...m, { role: "user", text }]);
+    const nextMsgs = [...msgs, { role: "user", text }];
+    setMsgs(nextMsgs);
     setThinking(true);
 
-    // Simulate AI thinking delay
-    setTimeout(() => {
-      let reply = FALLBACKS[Math.floor(Math.random() * FALLBACKS.length)];
-      for (const p of PATTERNS) {
-        if (p.test.test(text)) {
-          if (!p.answer) execute(p);
-          reply = p.answer ?? p.say;
-          break;
-        }
-      }
+    if (!USE_LLM) {
+      // Offline / no-key path: keep the original PATTERNS behaviour.
+      setTimeout(() => {
+        const reply = replyFromPatterns(text);
+        setMsgs((m) => [...m, { role: "ai", text: reply }]);
+        setThinking(false);
+        speak(reply);
+      }, 380 + Math.random() * 320);
+      return;
+    }
+
+    // LLM path — send recent history and let the model call tools.
+    const history = nextMsgs
+      .slice(-HISTORY_LIMIT)
+      .filter((m) => m.role === "user" || m.role === "ai")
+      .map((m) => ({ role: m.role === "user" ? "user" : "assistant", content: m.text }));
+
+    try {
+      const { content, toolCalls } = await chatWithOpenAI({ history });
+      for (const tc of toolCalls) dispatchTool(tc.name, tc.args);
+      const reply = content || (toolCalls.length
+        ? "Adjusting station conditions now."
+        : "Standing by, Central Station ready.");
       setMsgs((m) => [...m, { role: "ai", text: reply }]);
+      speak(reply);
+    } catch (err) {
+      const fallback = replyFromPatterns(text);
+      setMsgs((m) => [...m, {
+        role: "ai",
+        text: `${fallback}\n\n(LLM unavailable: ${err.message || err})`,
+      }]);
+      speak(fallback);
+    } finally {
       setThinking(false);
-    }, 480 + Math.random() * 380);
+    }
+  };
+
+  const toggleListening = () => {
+    if (!voiceSupported) {
+      setMsgs((m) => [...m, { role: "ai", text: "Voice input is not supported in this browser. Try Chrome, Edge or Safari." }]);
+      return;
+    }
+    if (listening) {
+      try { recognitionRef.current?.stop(); } catch {}
+      setListening(false);
+      return;
+    }
+    stopSpeaking();
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const rec = new SR();
+    rec.lang = "en-US";
+    rec.continuous = false;
+    rec.interimResults = true;
+    rec.maxAlternatives = 1;
+
+    rec.onresult = (e) => {
+      let finalText = "";
+      let interim = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const r = e.results[i];
+        if (r.isFinal) finalText += r[0].transcript;
+        else interim += r[0].transcript;
+      }
+      if (finalText) {
+        setInput("");
+        send(finalText);
+      } else if (interim) {
+        setInput(interim);
+      }
+    };
+    rec.onerror = (e) => {
+      setListening(false);
+      const msg = e.error === "not-allowed" || e.error === "service-not-allowed"
+        ? "Microphone access denied. Please grant permission to use voice input."
+        : `Voice input error: ${e.error}`;
+      setMsgs((m) => [...m, { role: "ai", text: msg }]);
+    };
+    rec.onend = () => setListening(false);
+
+    recognitionRef.current = rec;
+    try {
+      rec.start();
+      setListening(true);
+    } catch {
+      setListening(false);
+    }
+  };
+
+  const toggleVoiceOut = () => {
+    setVoiceOut((v) => {
+      const next = !v;
+      if (!next) stopSpeaking();
+      return next;
+    });
   };
 
   const onKey = (e) => {
@@ -199,29 +393,35 @@ export function AIAssistant({
     <>
       {/* Floating button + label */}
       <div style={{
-        position: "fixed", bottom: "13rem", right: "1.6rem", zIndex: 60,
-        display: "flex", flexDirection: "column", alignItems: "center", gap: 5,
+        position: "fixed", bottom: "13rem", left: "1.6rem", zIndex: 60,
+        display: "flex", flexDirection: "column", alignItems: "center", gap: 7,
       }}>
         <button
           onClick={() => setOpen((o) => !o)}
           title="Station AI — describe any change in plain language"
           style={{
-            width: 46, height: 46, borderRadius: "50%",
-            background: open ? "rgba(80,140,255,0.2)" : "rgba(4,10,24,0.88)",
-            border: `2px solid ${open ? "rgba(100,170,255,0.65)" : "rgba(100,150,200,0.38)"}`,
-            color: "#7ab8ff", fontSize: 20, cursor: "pointer",
+            width: open ? 38 : 64, height: open ? 38 : 64, borderRadius: "50%",
+            background: open
+              ? "radial-gradient(circle at 30% 30%, rgba(120,180,255,0.35), rgba(40,90,200,0.45))"
+              : "radial-gradient(circle at 30% 30%, rgba(120,180,255,0.55), rgba(20,50,140,0.92))",
+            border: `${open ? 1 : 2}px solid ${open ? "rgba(160,210,255,0.7)" : "rgba(140,200,255,0.75)"}`,
+            color: "#ffffff", fontSize: open ? 14 : 26, fontWeight: 700, cursor: "pointer",
             display: "flex", alignItems: "center", justifyContent: "center",
             transition: "all 0.22s",
-            boxShadow: open ? "0 0 22px rgba(100,170,255,0.22)" : "0 0 12px rgba(80,140,255,0.15)",
-            animation: open ? "none" : "aiPulse 2.8s ease-in-out infinite",
+            boxShadow: open
+              ? "0 0 14px rgba(120,180,255,0.35)"
+              : "0 0 32px rgba(100,170,255,0.65), 0 0 0 6px rgba(100,170,255,0.10), 0 6px 18px rgba(0,0,0,0.55)",
+            animation: open ? "none" : "aiPulse 2.4s ease-in-out infinite",
+            textShadow: open ? "none" : "0 0 8px rgba(180,220,255,0.85)",
           }}
         >
           {open ? "✕" : "⬡"}
         </button>
         <div style={{
-          fontFamily: MONO, fontSize: "0.38rem", letterSpacing: "0.2em",
-          color: open ? "rgba(100,160,255,0.45)" : "rgba(100,160,255,0.65)",
-          textTransform: "uppercase", textAlign: "center",
+          fontFamily: MONO, fontSize: "0.62rem", letterSpacing: "0.32em",
+          color: open ? "rgba(160,200,255,0.75)" : "#9fcaff",
+          textTransform: "uppercase", textAlign: "center", fontWeight: 700,
+          textShadow: open ? "none" : "0 0 10px rgba(120,180,255,0.6)",
           transition: "color 0.22s",
         }}>
           {open ? "close" : "AI"}
@@ -231,7 +431,7 @@ export function AIAssistant({
       {/* Chat panel */}
       {open && (
         <div style={{
-          position: "fixed", bottom: "17.2rem", right: "1.6rem", zIndex: 59,
+          position: "fixed", bottom: "18rem", left: "1.6rem", zIndex: 59,
           width: 320, height: 390,
           background: "rgba(3,7,17,0.97)",
           border: "1px solid rgba(100,150,220,0.2)",
@@ -252,10 +452,28 @@ export function AIAssistant({
           }}>
             <span style={{
               width: 6, height: 6, borderRadius: "50%",
-              background: "#4caf50", boxShadow: "0 0 6px #4caf50",
+              background: speaking ? "#7ab8ff" : "#4caf50",
+              boxShadow: speaking ? "0 0 8px #7ab8ff" : "0 0 6px #4caf50",
               display: "inline-block", flexShrink: 0,
+              animation: speaking ? "aiPulse 1.1s ease-in-out infinite" : "none",
             }} />
-            STATION AI · CENTRAL
+            <span style={{ flex: 1 }}>STATION AI · CENTRAL</span>
+            {voiceSupported && (
+              <button
+                onClick={toggleVoiceOut}
+                title={voiceOut ? "Mute voice replies" : "Enable voice replies"}
+                style={{
+                  background: "transparent",
+                  border: "1px solid rgba(100,150,220,0.18)",
+                  borderRadius: 4, padding: "2px 6px",
+                  color: voiceOut ? "rgba(110,175,255,0.85)" : "rgba(110,175,255,0.35)",
+                  fontFamily: MONO, fontSize: "0.55rem", cursor: "pointer",
+                  lineHeight: 1,
+                }}
+              >
+                {voiceOut ? "♪" : "✕"}
+              </button>
+            )}
           </div>
 
           {/* Messages */}
@@ -335,24 +553,47 @@ export function AIAssistant({
             borderTop: "1px solid rgba(100,150,220,0.08)",
             display: "flex", gap: 6, flexShrink: 0,
           }}>
+            {voiceSupported && (
+              <button
+                onClick={toggleListening}
+                disabled={thinking}
+                title={listening ? "Stop listening" : "Speak to the station"}
+                style={{
+                  background: listening ? "rgba(220,80,80,0.28)" : "rgba(70,120,220,0.18)",
+                  border: `1px solid ${listening ? "rgba(255,120,120,0.55)" : "rgba(80,130,220,0.32)"}`,
+                  borderRadius: 6,
+                  color: listening ? "#ff9a9a" : "#7ab8ff",
+                  padding: "6px 9px", cursor: thinking ? "not-allowed" : "pointer",
+                  fontFamily: MONO, fontSize: "0.62rem",
+                  opacity: thinking ? 0.4 : 1,
+                  transition: "all 0.15s",
+                  boxShadow: listening ? "0 0 12px rgba(255,120,120,0.4)" : "none",
+                  animation: listening ? "aiPulse 1.1s ease-in-out infinite" : "none",
+                  lineHeight: 1,
+                }}
+              >
+                {listening ? "■" : "🎙"}
+              </button>
+            )}
             <input
               ref={inputRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={onKey}
-              placeholder="Type a command or question…"
+              placeholder={listening ? "Listening…" : "Type or speak a command…"}
               style={{
                 flex: 1,
                 background: "rgba(255,255,255,0.04)",
-                border: "1px solid rgba(100,150,220,0.18)",
+                border: `1px solid ${listening ? "rgba(255,120,120,0.35)" : "rgba(100,150,220,0.18)"}`,
                 borderRadius: 6, padding: "6px 10px",
                 color: "rgba(195,215,245,0.9)",
                 fontFamily: MONO, fontSize: "0.54rem",
                 outline: "none",
+                transition: "border-color 0.15s",
               }}
             />
             <button
-              onClick={send}
+              onClick={() => send()}
               disabled={thinking || !input.trim()}
               style={{
                 background: "rgba(70,120,220,0.22)",
